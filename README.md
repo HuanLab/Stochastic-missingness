@@ -4,7 +4,7 @@ This repository contains downstream analysis scripts for studying feature missin
 
 Raw vendor files were converted to `.mzML` using [**ProteoWizard/MSConvert**](https://proteowizard.sourceforge.io/download.html), then processed using [**MassCube (v1.2.13)**](https://github.com/huaxuyu/masscube). We also tested this workflow on [MZmine (4.10.6)](https://github.com/mzmine/mzmine/releases/tag/v4.10.6) and [MS-DIAL (v5.5.260323)](https://github.com/systemsomicslab/MsdialWorkbench/releases). The scripts in this repository start from the raw aligned feature tables exported by each processing software and apply the downstream filtering, detection probability calculation, raw signal extraction, and peak attribute calculation.
 
-The sample data included in this repository contains a small subset of files for testing the workflow. Each software folder currently includes 3 analytical sample files plus 1 method blank (MB) file. A small sample `mzML.zip`is also included. The full dataset will be available on [Zenodo](XXXX_LINKTOADD_XXX).
+The sample data included in this repository contains a small subset of files for testing the workflow. Each software folder currently includes 3 analytical sample files plus 1 method blank (MB) file. A small sample `mzML.zip` is also included. The full dataset will be available on [Zenodo](XXXX_LINKTOADD_XXX).
 
 ---
 
