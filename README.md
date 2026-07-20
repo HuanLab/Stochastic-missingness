@@ -380,4 +380,4 @@ Citation information will be added after manuscript submission or publication.
 
 ## 📄 License
 
-License information will be added before public release.
+This project is licensed under the Apache License 2.0. See the `LICENSE` file for details.
