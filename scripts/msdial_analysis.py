@@ -23,6 +23,11 @@ ABS_EPS = 1e-9
 ALLOW_TRACE_IF_HEIGHT_MISMATCH = False
 WRITE_SCANLIST_COLUMNS = True
 
+MIN_MZ = 65.0
+MAX_RT = 23.0
+BLANK_INTENSITY_MULTIPLIER = 3.0
+BLANK_SAMPLE_PATTERN = r"^MB"
+
 ALIGNED_ID_COL = "Alignment ID"
 ALIGNED_RT_COL = "Alignment Rt(min)"
 ALIGNED_MZ_COL = "Alignment Mz"
@@ -44,7 +49,9 @@ ATTRIBUTE_NAMES = [
 
 REPO_ROOT = Path(__file__).resolve().parents[1] if "__file__" in globals() else Path.cwd()
 DEFAULT_PROJECT_DIR = REPO_ROOT / "sample_data" / "msdial_sample"
-DEFAULT_INPUT_CSV = DEFAULT_PROJECT_DIR / "aligned_feature_table.csv"
+DEFAULT_BLANK_INCLUDED_CSV = DEFAULT_PROJECT_DIR / "feature_table_mb.csv"
+DEFAULT_NOBLANK_CSV = DEFAULT_PROJECT_DIR / "feature_table_no_mb.csv"
+DEFAULT_FILTERED_OUTPUT_CSV = DEFAULT_PROJECT_DIR / "aligned_feature_table.csv"
 DEFAULT_SINGLE_FILES_DIR = DEFAULT_PROJECT_DIR / "single_files"
 DEFAULT_SINGLE_FILES_CSV_DIR = DEFAULT_PROJECT_DIR / "single_files_csv"
 DEFAULT_MZML_DIR = DEFAULT_PROJECT_DIR / "MZML" / "100"
@@ -159,41 +166,131 @@ def convert_trace_txts_to_csv(txt_dir: Path, csv_dir: Path, overwrite: bool = Fa
     print(f"Trace conversion: {converted} converted, {skipped} skipped.")
 
 
+def get_alignment_columns(df: pd.DataFrame) -> dict[str, str | None]:
+    return {
+        "id_col": find_first_existing_col(df, [ALIGNED_ID_COL, "AlignmentID", "ID"]),
+        "rt_col": find_first_existing_col(df, [ALIGNED_RT_COL, "Average Rt(min)", "Average RT(min)", "Average Rt", "RT", "Rt"]),
+        "mz_col": find_first_existing_col(df, [ALIGNED_MZ_COL, "Average Mz", "Average m/z", "AverageMz", "m/z", "mz"]),
+        "fill_col": find_first_existing_col(df, [FILL_PERCENT_COL, "Fill%"]),
+    }
+
+
+def get_sample_columns(df: pd.DataFrame) -> list[str]:
+    sample_pat = re.compile(r"^\d+-\d+_")
+    return [str(c) for c in df.columns if sample_pat.match(str(c))]
+
+
+def get_blank_columns(df: pd.DataFrame, blank_sample_pattern: str) -> list[str]:
+    pat = re.compile(blank_sample_pattern, flags=re.IGNORECASE)
+    return [str(c) for c in df.columns if pat.search(str(c))]
+
+
+def filter_blank_included_table(
+    blank_df: pd.DataFrame,
+    min_mz: float,
+    max_rt: float,
+    blank_multiplier: float,
+    blank_sample_pattern: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cols = get_alignment_columns(blank_df)
+    missing = [name for name, col in {"RT": cols["rt_col"], "m/z": cols["mz_col"]}.items() if col is None]
+    if missing:
+        raise ValueError("Missing columns in blank included table: " + ", ".join(missing))
+
+    sample_cols = get_sample_columns(blank_df)
+    blank_cols = get_blank_columns(blank_df, blank_sample_pattern)
+    if not sample_cols:
+        raise ValueError("No analytical sample columns were found in the blank included MS-DIAL table.")
+    if not blank_cols:
+        raise ValueError(f"No blank columns matched pattern {blank_sample_pattern!r}.")
+
+    out = blank_df.copy()
+    rt_values = pd.to_numeric(out[cols["rt_col"]], errors="coerce")
+    mz_values = pd.to_numeric(out[cols["mz_col"]], errors="coerce")
+    sample_max = out[sample_cols].apply(pd.to_numeric, errors="coerce").fillna(0).max(axis=1)
+    blank_max = out[blank_cols].apply(pd.to_numeric, errors="coerce").fillna(0).max(axis=1)
+
+    # MS acquisition was set above 65 m/z, but MS-DIAL can still export lower m/z features.
+    keep_mz = mz_values >= min_mz
+    keep_rt = rt_values <= max_rt
+    keep_blank = sample_max >= blank_multiplier * blank_max
+    keep = keep_mz & keep_rt & keep_blank
+
+    report = pd.DataFrame({
+        "feature_index": np.arange(len(out), dtype=int),
+        "feature_ID": out[cols["id_col"]].astype(str) if cols["id_col"] else np.arange(1, len(out) + 1).astype(str),
+        "RT": rt_values,
+        "m/z": mz_values,
+        "max_sample_intensity": sample_max,
+        "max_blank_intensity": blank_max,
+        "blank_threshold": blank_multiplier * blank_max,
+        "keep_mz": keep_mz,
+        "keep_rt": keep_rt,
+        "keep_blank": keep_blank,
+        "keep": keep,
+    })
+
+    filtered = out.loc[keep].copy()
+    print("Blank included table filtering")
+    print(f"  input rows:                  {len(out)}")
+    print(f"  retained rows:               {len(filtered)}")
+    print(f"  removed m/z < {min_mz:g}:       {int((~keep_mz).sum())}")
+    print(f"  removed RT > {max_rt:g} min:     {int((~keep_rt).sum())}")
+    print(f"  removed sample < {blank_multiplier:g}x blank: {int((~keep_blank).sum())}")
+    print(f"  analytical sample columns:    {len(sample_cols)}")
+    print(f"  blank columns:                {len(blank_cols)}")
+
+    return filtered, report
+
+
 def create_filtered_noblank_table(
     noblank_csv: Path,
-    blank_filtered_csv: Path,
+    blank_included_csv: Path,
     output_csv: Path,
+    filtered_reference_csv: Path,
+    filter_report_csv: Path,
+    min_mz: float,
+    max_rt: float,
+    blank_multiplier: float,
+    blank_sample_pattern: str,
 ) -> pd.DataFrame:
-    reference_df = pd.read_csv(blank_filtered_csv, dtype=str, encoding="latin1", keep_default_na=False)
+    blank_df = pd.read_csv(blank_included_csv, dtype=str, encoding="latin1", keep_default_na=False)
     noblank_df = pd.read_csv(noblank_csv, dtype=str, encoding="latin1", keep_default_na=False)
 
-    rt_aliases = [ALIGNED_RT_COL, "Average Rt(min)", "Average RT(min)", "Average Rt", "RT", "Rt"]
-    mz_aliases = [ALIGNED_MZ_COL, "Average Mz", "Average m/z", "AverageMz", "m/z", "mz"]
+    reference_df, filter_report = filter_blank_included_table(
+        blank_df=blank_df,
+        min_mz=min_mz,
+        max_rt=max_rt,
+        blank_multiplier=blank_multiplier,
+        blank_sample_pattern=blank_sample_pattern,
+    )
 
-    ref_rt_col = find_first_existing_col(reference_df, rt_aliases)
-    ref_mz_col = find_first_existing_col(reference_df, mz_aliases)
-    new_rt_col = find_first_existing_col(noblank_df, rt_aliases)
-    new_mz_col = find_first_existing_col(noblank_df, mz_aliases)
+    filtered_reference_csv.parent.mkdir(parents=True, exist_ok=True)
+    reference_df.to_csv(filtered_reference_csv, index=False, encoding="latin1", lineterminator="\n")
+    filter_report.to_csv(filter_report_csv, index=False, encoding="latin1", lineterminator="\n")
 
+    ref_cols = get_alignment_columns(reference_df)
+    new_cols = get_alignment_columns(noblank_df)
     missing = [name for name, col in {
-        "reference RT": ref_rt_col,
-        "reference m/z": ref_mz_col,
-        "no blank RT": new_rt_col,
-        "no blank m/z": new_mz_col,
+        "blank included RT": ref_cols["rt_col"],
+        "blank included m/z": ref_cols["mz_col"],
+        "no blank RT": new_cols["rt_col"],
+        "no blank m/z": new_cols["mz_col"],
+        "no blank Fill %": new_cols["fill_col"],
     }.items() if col is None]
     if missing:
-        raise ValueError("Missing columns for blank filter transfer: " + ", ".join(missing))
+        raise ValueError("Missing columns for filtered no blank table creation: " + ", ".join(missing))
 
     reference_match = pd.DataFrame({
         "row_index": np.arange(len(reference_df), dtype=int),
-        "rt": pd.to_numeric(reference_df[ref_rt_col], errors="coerce"),
-        "mz": pd.to_numeric(reference_df[ref_mz_col], errors="coerce"),
+        "rt": pd.to_numeric(reference_df[ref_cols["rt_col"]], errors="coerce"),
+        "mz": pd.to_numeric(reference_df[ref_cols["mz_col"]], errors="coerce"),
     }).dropna(subset=["rt", "mz"])
 
     noblank_match = pd.DataFrame({
         "row_index": np.arange(len(noblank_df), dtype=int),
-        "rt": pd.to_numeric(noblank_df[new_rt_col], errors="coerce"),
-        "mz": pd.to_numeric(noblank_df[new_mz_col], errors="coerce"),
+        "rt": pd.to_numeric(noblank_df[new_cols["rt_col"]], errors="coerce"),
+        "mz": pd.to_numeric(noblank_df[new_cols["mz_col"]], errors="coerce"),
     }).dropna(subset=["rt", "mz"])
 
     noblank_sorted = noblank_match.sort_values(["mz", "rt", "row_index"], kind="mergesort").reset_index(drop=True)
@@ -236,7 +333,7 @@ def create_filtered_noblank_table(
             })
 
     if not candidates:
-        raise ValueError("No blank-filtered features matched the no-blank table.")
+        raise ValueError("No filtered blank included features matched the no blank table.")
 
     candidate_df = pd.DataFrame(candidates).sort_values(
         ["score", "dmz", "drt", "reference_index", "noblank_index"],
@@ -253,13 +350,26 @@ def create_filtered_noblank_table(
             continue
         used_ref.add(ref_index)
         used_new.add(new_index)
-        accepted.append(new_index)
+        accepted.append({
+            "reference_index": ref_index,
+            "noblank_index": new_index,
+            "dmz": float(match.dmz),
+            "drt": float(match.drt),
+            "score": float(match.score),
+        })
 
-    filtered_df = noblank_df.iloc[sorted(accepted)].copy()
+    accepted_df = pd.DataFrame(accepted)
+    filtered_df = noblank_df.iloc[sorted(accepted_df["noblank_index"].astype(int).tolist())].copy()
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     filtered_df.to_csv(output_csv, index=False, encoding="latin1", lineterminator="\n")
-    print(f"Saved filtered no-blank table: {output_csv}")
-    print(f"Retained {len(filtered_df)} of {len(noblank_df)} no-blank rows.")
+    accepted_df.to_csv(output_csv.with_name(output_csv.stem + "_match_report.csv"), index=False, encoding="latin1", lineterminator="\n")
+
+    print("Filtered no blank table")
+    print(f"  no blank rows:               {len(noblank_df)}")
+    print(f"  filtered reference rows:      {len(reference_df)}")
+    print(f"  matched rows retained:        {len(filtered_df)}")
+    print(f"  saved filtered table:         {output_csv}")
+
     return filtered_df
 
 
@@ -952,7 +1062,9 @@ def process_concentration(
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-dir", default=str(DEFAULT_PROJECT_DIR))
-    parser.add_argument("--input-csv", default=None)
+    parser.add_argument("--blank-included-csv", "--blank-filtered-reference-csv", dest="blank_included_csv", default=None)
+    parser.add_argument("--noblank-csv", "--noblank-unfiltered-csv", dest="noblank_csv", default=None)
+    parser.add_argument("--filtered-output-csv", default=None)
     parser.add_argument("--single-files-dir", default=None)
     parser.add_argument("--single-files-csv-dir", default=None)
     parser.add_argument("--mzml-dir", default=None)
@@ -960,35 +1072,47 @@ def parse_args():
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--overwrite-converted-csv", action="store_true")
     parser.add_argument("--skip-txt-conversion", action="store_true")
-    parser.add_argument("--use-fill-percent-pdet", action="store_true")
-    parser.add_argument("--make-filtered-table", action="store_true")
-    parser.add_argument("--blank-filtered-reference-csv", default=None)
-    parser.add_argument("--noblank-unfiltered-csv", default=None)
-    parser.add_argument("--filtered-output-csv", default=None)
+    parser.add_argument("--skip-blank-filtering", action="store_true")
+    parser.add_argument("--pdet-from-intensities", action="store_true")
+    parser.add_argument("--min-mz", type=float, default=MIN_MZ)
+    parser.add_argument("--max-rt", type=float, default=MAX_RT)
+    parser.add_argument("--blank-multiplier", type=float, default=BLANK_INTENSITY_MULTIPLIER)
+    parser.add_argument("--blank-sample-pattern", default=BLANK_SAMPLE_PATTERN)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     project_dir = resolve_path(args.project_dir)
-    input_csv = resolve_path(args.input_csv) if args.input_csv else project_dir / "aligned_feature_table.csv"
+    blank_included_csv = resolve_path(args.blank_included_csv) if args.blank_included_csv else project_dir / "feature_table_mb.csv"
+    noblank_csv = resolve_path(args.noblank_csv) if args.noblank_csv else project_dir / "feature_table_no_mb.csv"
+    filtered_output_csv = resolve_path(args.filtered_output_csv) if args.filtered_output_csv else project_dir / "aligned_feature_table.csv"
     single_files_dir = resolve_path(args.single_files_dir) if args.single_files_dir else project_dir / "single_files"
     single_files_csv_dir = resolve_path(args.single_files_csv_dir) if args.single_files_csv_dir else project_dir / "single_files_csv"
     mzml_dir = resolve_path(args.mzml_dir) if args.mzml_dir else project_dir / "MZML" / "100"
     blank_mzml = resolve_path(args.blank_mzml) if args.blank_mzml else mzml_dir / "MB_P1-A-4_01_13240.mzML"
     output_root = resolve_path(args.output_root) if args.output_root else project_dir / "msdial_pdet"
+    output_root.mkdir(parents=True, exist_ok=True)
 
-    if args.make_filtered_table:
-        blank_ref = resolve_path(args.blank_filtered_reference_csv) if args.blank_filtered_reference_csv else project_dir / "nogap_blank.csv"
-        noblank = resolve_path(args.noblank_unfiltered_csv) if args.noblank_unfiltered_csv else project_dir / "nogap_noblank.csv"
-        filtered_out = resolve_path(args.filtered_output_csv) if args.filtered_output_csv else input_csv
-        create_filtered_noblank_table(noblank, blank_ref, filtered_out)
-        input_csv = filtered_out
+    if args.skip_blank_filtering:
+        input_csv = filtered_output_csv
+    else:
+        input_csv = filtered_output_csv
+        create_filtered_noblank_table(
+            noblank_csv=noblank_csv,
+            blank_included_csv=blank_included_csv,
+            output_csv=filtered_output_csv,
+            filtered_reference_csv=output_root / "msdial_blank_filtered_reference.csv",
+            filter_report_csv=output_root / "msdial_blank_filter_report.csv",
+            min_mz=args.min_mz,
+            max_rt=args.max_rt,
+            blank_multiplier=args.blank_multiplier,
+            blank_sample_pattern=args.blank_sample_pattern,
+        )
 
     if not args.skip_txt_conversion:
         convert_trace_txts_to_csv(single_files_dir, single_files_csv_dir, overwrite=args.overwrite_converted_csv)
 
-    output_root.mkdir(parents=True, exist_ok=True)
     df, _ = prepare_feature_table(input_csv)
     sample_groups = discover_msdial_samples(df)
 
@@ -999,17 +1123,18 @@ def main():
     for conc, samples in sample_groups.items():
         print(f"  {conc}: {len(samples)} samples")
 
+    use_fill_percent_pdet = not args.pdet_from_intensities
     if len(sample_groups) == 1:
         conc, samples = next(iter(sorted(sample_groups.items())))
         process_concentration(
             df, conc, samples, mzml_dir, single_files_csv_dir, blank_mzml, output_root,
-            use_fill_percent_pdet=args.use_fill_percent_pdet,
+            use_fill_percent_pdet=use_fill_percent_pdet,
         )
     else:
         for conc, samples in sorted(sample_groups.items()):
             process_concentration(
                 df, conc, samples, mzml_dir, single_files_csv_dir, blank_mzml, output_root / str(conc),
-                use_fill_percent_pdet=args.use_fill_percent_pdet,
+                use_fill_percent_pdet=use_fill_percent_pdet,
             )
 
 
