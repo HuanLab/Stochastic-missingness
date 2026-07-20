@@ -46,6 +46,8 @@ Filtering, detection probability, and peak attribute extraction
 Feature detection and peak attribute summaries
 ```
 
+---
+
 ## ⚙️ Included Filtering Steps
 
 Users do **NOT** need to pre-calculate $$P_{\mathrm{detection}}$$ bins or manually filter the feature table before running these scripts. The scripts are designed to start from the raw software outputs. Filtering is performed inside the workflow before $$P_{\mathrm{detection}}$$ and peak attributes are calculated.
