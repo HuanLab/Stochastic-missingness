@@ -90,7 +90,10 @@ missingness/
 │   ├── masscube_analysis.py
 │   ├── mzmine_analysis.py
 │   ├── msdial_analysis.py
-│   └── peak_attributes.py
+│   ├── peak_attributes.py
+│   ├── run_masscube.sh
+│   ├── run_msdial.sh
+│   └── run_mzmine.sh
 │
 └── sample_data/
     ├── masscube_sample/
@@ -133,12 +136,80 @@ pip install pandas numpy pyteomics tqdm scipy matplotlib
 
 ---
 
-## 🟢 MassCube
+## 🚀 Running the Workflows
 
-Script:
+Each software workflow has a small shell script in `scripts/`. The easiest way to run the analysis is to edit the paths at the top of the shell script, then run it from the [VS Code](https://code.visualstudio.com/thank-you?dv=win64user) terminal.
+
+```text
+scripts/
+├── masscube_analysis.py
+├── msdial_analysis.py
+├── mzmine_analysis.py
+├── peak_attributes.py
+├── run_masscube.sh
+├── run_msdial.sh
+└── run_mzmine.sh
+```
+
+On Windows, use Git Bash or WSL in the VS Code terminal. Paths should use forward slashes (`/`).
+
+For Git Bash on Windows:
 
 ```bash
-python scripts/masscube_analysis.py
+PROJECT_DIR="E:/Code/Python/MassCube"
+```
+
+For WSL:
+
+```bash
+PROJECT_DIR="/mnt/e/Code/Python/MassCube"
+```
+
+Avoid Windows backslash paths inside `.sh` files:
+
+```bash
+PROJECT_DIR="E:\Nhi\Python\MassCube"
+```
+
+Each `.sh` file automatically finds the repository root, so it can be launched from VS Code without manually changing directories.
+
+Run the workflows with:
+
+```bash
+bash scripts/run_masscube.sh
+bash scripts/run_msdial.sh
+bash scripts/run_mzmine.sh
+```
+
+Or, on macOS/Linux, make the scripts executable once:
+
+```bash
+chmod +x scripts/run_masscube.sh scripts/run_msdial.sh scripts/run_mzmine.sh
+```
+
+Then run:
+
+```bash
+./scripts/run_masscube.sh
+./scripts/run_msdial.sh
+./scripts/run_mzmine.sh
+```
+
+Inside each shell script, leave any variable empty to use the default path defined in the Python script. For example:
+
+```bash
+BLANK_MZML=""
+```
+
+means that `--blank-mzml` will not be passed, and the Python script will use its default blank mzML path.
+
+
+### 🟢 MassCube
+
+Run:
+
+```bash
+bash scripts/run_masscube.sh
 ```
 
 Default input:
@@ -151,45 +222,30 @@ sample_data/mzML/
 
 MassCube `single_files/*.txt` are converted automatically to `single_files_csv/*.csv`. Existing CSV files are reused unless reconversion is requested.
 
-Users can specify new paths using flags instead of modifying the source code as follows:
-
-```bash
-python scripts/masscube_analysis.py ^
-  --project-dir path/to/masscube_project ^
-  --input-csv path/to/masscube_project/aligned_feature_table.csv ^
-  --single-txt-dir path/to/masscube_project/single_files ^
-  --mzml-root path/to/mzML ^
-  --blank-mzml path/to/mzML/MB_P1-A-4_01_13240.mzML
-```
-
-Common path flags:
-
-```text
---project-dir              project folder
---input-csv                aligned feature table
---single-txt-dir           MassCube single-file TXT folder
---single-csv-dir           converted single-file CSV folder
---mzml-root                mzML root folder
---blank-mzml               blank mzML file for S/N
---output-root              output folder
---skip-txt-conversion      skip TXT to CSV conversion
---overwrite-converted-csv  force TXT to CSV reconversion
-```
-
 Default output:
 
 ```text
 sample_data/masscube_sample/masscube_pdet/
 ```
 
----
-
-## 🔵 MS-DIAL
-
-Script:
+Users can specify new paths by editing `scripts/run_masscube.sh`:
 
 ```bash
-python scripts/msdial_analysis.py
+PROJECT_DIR="sample_data/masscube_sample" 
+INPUT_CSV="" 
+SINGLE_TXT_DIR="" 
+SINGLE_CSV_DIR="" 
+MZML_ROOT="sample_data/mzML" 
+BLANK_MZML="" 
+OUTPUT_ROOT=""
+```
+
+
+### 🔵 MS-DIAL
+
+Run:
+```bash
+bash scripts/run_msdial.sh
 ```
 
 MS-DIAL analysis in this project uses two aligned tables because it gap fills automatically and the `Fill %` from a blank-included table also includes the blank in the denominator. Since we calculate $$P_{\mathrm{detection}}$$ based on `Fill %`, this would be inaccurate.  Users would need to manually export individual traces into `single_files/`.
@@ -201,27 +257,6 @@ feature_table_mb.csv        used for m/z, RT, and blank filtering
 feature_table_no_mb.csv     used for Fill % and P_detection
 single_files/               individual MS-DIAL peak lists
 sample_data/mzML/           mzML files
-```
-
-Run with sample data:
-
-```bash
-python scripts/msdial_analysis.py
-```
-
-Common path flags:
-
-```text
---project-dir              project folder
---blank-included-csv       aligned feature table with blank sample
---noblank-csv              aligned feature table without blank sample
---single-files-dir         MassCube single-file TXT folder
---single-files-csv-dir     converted single-file CSV folder
---mzml-dir                 mzML root folder
---blank-mzml               blank mzML file for S/N
---output-root              output folder
---skip-txt-conversion      skip TXT to CSV conversion
---overwrite-converted-csv  force TXT to CSV reconversion
 ```
 
 Default output:
@@ -236,14 +271,26 @@ The feature table with MB analyzed is used for blank filtering, after which it's
 sample_data/msdial_sample/aligned_feature_table.csv
 ```
 
----
-
-## 🟡 MZmine
-
-Script:
+Users can edit these variables in `scripts/run_msdial.sh`:
 
 ```bash
-python scripts/mzmine_analysis.py
+PROJECT_DIR="sample_data/msdial_sample"
+BLANK_INCLUDED_CSV=""
+NOBLANK_CSV=""
+INPUT_CSV=""
+SINGLE_FILES_DIR=""
+SINGLE_FILES_CSV_DIR=""
+MZML_DIR="sample_data/mzML/100"
+BLANK_MZML=""
+OUTPUT_ROOT=""
+```
+
+### 🟡 MZmine
+
+Run:
+
+```bash
+bash scripts/run_mzmine.sh
 ```
 
 Default input:
@@ -267,26 +314,42 @@ datafile:<sample>.d:rt_range:min
 datafile:<sample>.d:rt_range:max
 ```
 
-Run with sample data:
-
-```bash
-python scripts/mzmine_analysis.py
-```
-
-Common path flags:
-
-```text
---project-dir              project folder
---input-csv                aligned feature table
---mzml-dir                 mzML root folder
---blank-mzml               blank mzML file for S/N
---output-root              output folder
-```
-
 Default output:
 
 ```text
 sample_data/mzmine_sample/mzmine_pdet/
+```
+
+Users can edit these variables in `scripts/run_mzmine.sh`:
+
+```bash
+PROJECT_DIR="sample_data/mzmine_sample"
+INPUT_CSV=""
+MZML_DIR="sample_data/mzML/100"
+BLANK_MZML=""
+OUTPUT_ROOT=""
+```
+
+### 🤖 Advanced: Running Python Scripts
+
+The shell scripts are wrappers around the Python scripts. Advanced users can still pass command line flags directly if they prefer. A list of MassCube flags is below (see software-specific scripts for details):
+
+```text
+--project-dir              project folder
+--input-csv                aligned feature table
+--single-txt-dir           MassCube single-file TXT folder
+--single-csv-dir           converted single-file CSV folder
+--mzml-root                mzML root folder
+--blank-mzml               blank mzML file for S/N
+--output-root              output folder
+--skip-txt-conversion      skip TXT to CSV conversion
+--overwrite-converted-csv  force TXT to CSV reconversion
+```
+
+For example:
+
+```bash
+python scripts/masscube_analysis.py --project-dir path/to/project --mzml-root path/to/mzML
 ```
 
 ---
@@ -355,17 +418,17 @@ The output is written to `peak_analysis/` inside the software folder `*_sample/`
 
 ```text
 peak_analysis/
-  int_summary.csv
-  area_summary.csv
-  width_summary.csv
-  scancount_summary.csv
-  snr_summary.csv
-  smoothness_summary.csv
-  sharpness_summary.csv
-  symmetry_summary.csv
-  density_summary.csv
-  rank_summary.csv
-  rtshift_summary.csv
+├── int_summary.csv
+├── area_summary.csv
+├── width_summary.csv
+├── scancount_summary.csv
+├── snr_summary.csv
+├── smoothness_summary.csv
+├── sharpness_summary.csv
+├── symmetry_summary.csv
+├── density_summary.csv
+├── rank_summary.csv
+└── rtshift_summary.csv
 ```
 
 Each summary file contains feature metadata, the value for that attribute across replicates, and summary statistics: `max`, `min`, `mean`, `median`, `75_perc`, `25_perc`, `sd`, and `rsd`.
