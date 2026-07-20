@@ -392,6 +392,8 @@ The `attributes/` folder contains one file per attribute.
 
 The numbered folders contain features grouped by \(P_{\mathrm{detection}}\), from `0/` to `100/`.
 
+---
+
 ## 📈 Peak Attribute Summaries
 
 After running one of the extraction workflows, summarize replicate-level attributes using:
